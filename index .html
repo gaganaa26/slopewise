@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SLOPEWISE - The Quiet Before the Slide</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#0b1020;--panel:#111a2e;--card:#16223b;--line:#25365a;--tx:#e6edf7;--mut:#8fa3c4;--acc:#38bdf8}
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:#0a1226}
+header b{font-size:18px;letter-spacing:.14em}header b span{color:var(--acc)}header small{color:var(--mut)}
+header .pill{margin-left:auto;font-size:12px;border:1px solid #7c3a3a;color:#fca5a5;padding:3px 10px;border-radius:99px}
+main{display:flex;height:calc(100% - 52px)}#map{flex:1;background:#0b1020}
+aside{width:400px;max-width:46vw;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column}
+#tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+#tabs button{flex:1;background:none;border:0;color:var(--mut);padding:11px 6px;cursor:pointer;font-weight:600;border-bottom:2px solid transparent}
+#tabs button.on{color:var(--acc);border-color:var(--acc)}#body{padding:14px 16px;overflow:auto;flex:1}
+h3{margin:.1em 0 .4em}.mut{color:var(--mut)}.warn{background:#3a2a10;border:1px solid #7a5a1a;color:#fcd34d;padding:8px 10px;border-radius:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.k{color:var(--mut);font-size:12px}.v{font-size:20px;font-weight:700}
+.badge{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid;margin:4px 0}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:8px;vertical-align:-2px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer}.row:hover{background:#1c2b4a}
+table{width:100%;border-collapse:collapse;font-size:12.5px}td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+.bar{margin:7px 0;font-size:12.5px}.track{height:9px;background:#0c1426;border-radius:6px;margin-top:3px;overflow:hidden}
+.track div{height:100%;background:var(--acc)}.track em{font-size:11px;color:var(--mut);font-style:normal;padding-left:4px}
+button.act{background:var(--acc);color:#04202e;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;margin:4px 6px 4px 0}
+select,input[type=range]{width:100%}label{display:block;margin:5px 0;cursor:pointer}ul{padding-left:18px;margin:6px 0}
+@media(max-width:800px){main{flex-direction:column}aside{width:100%;max-width:none;height:50%}}
+</style></head><body>
+<header><b>SLOPE<span>WISE</span></b><small>The quiet before the slide &middot; <span id="site"></span></small>
+<span class="pill">Observed deformation &amp; exposure &middot; not a landslide prediction</span></header>
+<main><div id="map"></div><aside><div id="tabs"></div><div id="body"></div></aside></main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data.js"></script>
+<script>
+const D=window.SLOPEWISE,M=D.meta,H=D.hotspots;
+const $=s=>document.querySelector(s);
+const fmt=(x,n=1)=>(x==null||isNaN(x))?'—':(+x).toFixed(n);
+const sgn=x=>x==null?'—':(x>0?'+':'')+fmt(x);
+const tier=p=>p==null?'na':p>=.6?'high':p>=.35?'med':'low';
+const TC={high:'#ef4444',med:'#f59e0b',low:'#22c55e',na:'#94a3b8'};
+const TL={high:'High review priority',med:'Medium review priority',low:'Low review priority',na:'Not scored'};
+const NM={D:'Deformation (vs noise floor)',T:'Terrain steepness',R:'Rainfall context',E:'Infrastructure exposure',S:'Movement trend'};
+$('#site').textContent=M.site;
+
+/* ---------- map ---------- */
+const map=L.map('map').setView(M.center,12);map.createPane('sar').style.zIndex=250;
+const base={Satellite:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:18,attribution:'Esri'}),
+ Topo:L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'OpenTopoMap'}),
+ Streets:L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'})};
+base.Satellite.addTo(map);L.control.layers(base,null,{position:'topleft'}).addTo(map);
+let cur=M.epochs.length-1,sel=H.length?H[0].id:null,tab='map';
+const show={d:true,g:true,h:true,r:true,z:false,p:false};
+const ov=M.epochs.map(e=>({d:L.imageOverlay(e.disp,e.bounds,{pane:'sar'}),g:L.imageOverlay(e.grey,e.bounds,{pane:'sar'})}));
+map.fitBounds(M.epochs[cur].bounds);
+const rLayer=L.layerGroup(D.roads.map(r=>L.polyline(r.c,{color:'#fff',weight:/motorway|trunk|primary|secondary/.test(r.h)?2.6:1.2,opacity:.75}).bindTooltip(r.n)));
+const pl=L.layerGroup(D.places.map(p=>L.circleMarker([p.lat,p.lon],{radius:4,color:'#38bdf8',fillOpacity:1}).bindTooltip(p.n+' ('+p.k+')'))).addTo(map);
+const zLayer=L.layerGroup(H.map(h=>L.circle([h.lat,h.lon],{radius:500,color:'#f97316',weight:1,dashArray:'4 4',fillOpacity:.05})));
+const pLayer=L.layerGroup(H.filter(h=>h.down).map(h=>L.polyline(h.down.path,{color:'#f472b6',weight:2,dashArray:'2 5'})));
+const marks={};
+const hLayer=L.layerGroup(H.map(h=>{const m=L.circleMarker([h.lat,h.lon],{radius:7+Math.min(10,Math.sqrt(h.area_ha)*2),color:'#0b1020',weight:2,
+ fillColor:TC[tier(h.P)],fillOpacity:.92,dashArray:h.conf.label==='Low'?'3 3':null}).bindTooltip('#'+h.id+' · '+sgn(h.mean_mm)+' mm · conf '+h.conf.label);
+ m.on('click',()=>{select(h.id);setTab('hotspot')});marks[h.id]=m;return m}));
+const tg=(l,on)=>on?l.addTo(map):map.removeLayer(l);
+function applyLayers(){ov.forEach((o,i)=>{map.removeLayer(o.d);map.removeLayer(o.g);if(i===cur){if(show.d)o.d.addTo(map);if(show.g)o.g.addTo(map)}});
+ tg(rLayer,show.r);tg(zLayer,show.z);tg(pLayer,show.p);tg(hLayer,show.h)}
+const hs=id=>H.find(h=>h.id===id);
+function select(id){sel=id;const h=hs(id);if(h)map.flyTo([h.lat,h.lon],Math.max(map.getZoom(),14),{duration:.6});if(tab!=='map')render()}
+function setTab(t){tab=t;render()}
+function setEpoch(i){cur=i;applyLayers();$('#epinfo').innerHTML=epInfo()}
+function dl(n,t,c){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:t}));a.download=n;a.click()}
+
+/* ---------- panels ---------- */
+const chk=(k,t)=>`<label><input type=checkbox ${show[k]?'checked':''} onchange="show.${k}=this.checked;applyLayers()"> ${t}</label>`;
+function pMap(){const e=M.epochs[cur],sg=e.sigma;
+ return `<h3>Earth movement map</h3><p class=mut>Satellite-derived line-of-sight (LOS) change, ${e.label}. Colours are display classes scaled to this scene's noise floor (σ = ${fmt(sg)} mm), not universal thresholds.</p>
+ <div class="card legend"><i style="background:#4ade80"></i>Stable-looking (&lt; 2σ = ${fmt(2*sg)} mm)<br><i style="background:#facc15"></i>Movement worth monitoring (2–4σ)<br>
+ <i style="background:#ef4444"></i>Stronger observed deformation (&gt; 4σ = ${fmt(4*sg)} mm)<br><i style="background:#94a3b8"></i>Unavailable / unreliable (low coherence) &mdash; <b>not</b> evidence of stability</div>
+ <div class=card>${chk('d','Deformation layer')}${chk('g','Unreliable-measurement mask (grey)')}${chk('h','Hotspots')}${chk('r','Roads (OSM)')}</div>
+ <h3>Hotspots by review priority</h3><p class=mut>Relative, uncalibrated ranking. Confidence is scored separately.</p>
+ ${H.slice(0,12).map(h=>`<div class=row onclick="select(${h.id});setTab('hotspot')"><span><b style="color:${TC[tier(h.P)]}">●</b> #${h.id} &nbsp;${sgn(h.mean_mm)} mm</span><span class=mut>conf ${h.conf.label} · P ${fmt(h.P,2)}</span></div>`).join('')}`}
+function pHot(){const h=hs(sel);if(!h)return'<p class=mut>Select a hotspot.</p>';const t=tier(h.P);
+ return `<h3>Hotspot #${String(h.id).padStart(2,'0')}</h3>
+ <span class=badge style="color:${TC[t]};border-color:${TC[t]}">${TL[t]} · P = ${fmt(h.P,2)}</span><span class="mut" style="font-size:12px"> relative, uncalibrated</span>
+ <div class="card grid"><div><div class=k>LOS displacement (sign convention under verification)</div><div class=v>${sgn(h.mean_mm)} mm</div></div>
+ <div><div class=k>Measurement confidence</div><div class=v>${h.conf.label} <span class=mut style="font-size:13px">${fmt(h.conf.score,2)}</span></div></div>
+ <div><div class=k>Nearest road</div><div class=v style="font-size:16px">${h.road?h.road.name+' · '+fmt(h.road.dist_m,0)+' m':'OSM not loaded'}</div></div>
+ <div><div class=k>Slope angle</div><div class=v>${h.slope==null?'DEM not loaded':fmt(h.slope,0)+'°'}</div></div></div>
+ <b>Why was this hotspot identified?</b><ul>${h.why.map(w=>`<li>${w}</li>`).join('')}</ul>
+ <b>Priority breakdown</b> <span class=mut>(completeness ${fmt(h.completeness*100,0)}% of weights)</span>
+ ${Object.keys(M.weights).map(k=>{const v=h.comps[k];return `<div class=bar><span>${NM[k]} <b>${fmt(M.weights[k]*100,0)}%</b></span><div class=track>${v==null?'<em>not available in this run &mdash; excluded &amp; re-weighted</em>':`<div style="width:${v*100}%"></div>`}</div></div>`}).join('')}
+ <button class=act onclick="setTab('report')">Open evidence report</button>`}
+function epInfo(){const e=M.epochs[cur];return `<div class=card><b>${e.label}</b><br><span class=mut style="word-break:break-all">${e.granule}</span><br>Maturity: ${M.maturity} · noise floor σ ${fmt(e.sigma)} mm</div>`}
+function pTime(){const n=M.epochs.length,h=hs(sel);
+ return `<h3>Time travel</h3>${n>1?`<input type=range min=0 max=${n-1} value=${cur} oninput="setEpoch(+this.value)">`:''}<div id=epinfo>${epInfo()}</div>
+ ${n<2?'<p class=warn>Only one usable acquisition pair was available. SLOPEWISE shows it as-is and does not fabricate a time series or trend; movement trend (S) is excluded from the priority index.</p>':'<p class=mut>Each epoch is an independent 12-day interferometric pair, not cumulative displacement.</p>'}
+ ${h?`<b>Hotspot #${h.id} across epochs</b>${h.series.map(s=>`<div class=bar><span>${s.label}: <b>${s.mm==null?'no valid data':sgn(s.mm)+' mm'}</b></span><div class=track><div style="width:${s.mm==null?0:Math.min(100,Math.abs(s.mm)/Math.max(1,Math.abs(h.max_abs_mm))*100)}%"></div></div></div>`).join('')}`:''}`}
+function exposed(h){return (h.road&&h.road.dist_m<500)||(h.down&&h.down.hit_m!=null)}
+function pInfra(){const R=H.slice().sort((a,b)=>((a.road?a.road.dist_m:1e9)-(b.road?b.road.dist_m:1e9)));
+ return `<h3>Infrastructure exposure</h3>${!M.osm?'<p class=warn>OSM roads were not loaded (offline). Exposure cannot be evaluated.</p>':''}
+ <p class=mut>Orange rings: 500 m proximity zones. Pink dashed lines: steepest-descent paths (up to 3 km) from each hotspot${M.dem?'':' &mdash; needs a DEM, not loaded in this run'}.</p>
+ <div class=card>${chk('z','500 m impact zones')}${chk('p','Downslope flow paths')}${chk('r','Roads')}</div>
+ <table><tr><th>#</th><th>Nearest road</th><th>m</th><th>Downslope</th><th>Settlement</th></tr>
+ ${R.map(h=>`<tr style="cursor:pointer" onclick="select(${h.id});setTab('hotspot')"><td>${h.id}</td><td>${h.road?h.road.name:'—'}</td><td>${h.road?fmt(h.road.dist_m,0):'—'}</td>
+ <td>${h.down?(h.down.hit_m!=null?'road @ '+fmt(h.down.hit_m,0)+' m':'no road hit'):'n/a'}</td><td>${h.place?h.place.name+' '+fmt(h.place.dist_m,0)+' m':'—'}</td></tr>`).join('')}</table>
+ <p class=mut>${H.filter(exposed).length} of ${H.length} hotspots have a road within 500 m or on their downslope path &mdash; candidates for <b>field inspection</b>, not a statement that failure will occur.</p>`}
+const LIM=['LOS displacement is the 1-D projection of 3-D ground motion onto the radar line of sight and is relative to a stable reference level, not absolute.',
+ 'Phase-to-displacement uses d = -λ·Δφ/4π with L-band λ ≈ 0.238 m; the product sign convention is being verified, so direction (toward/away) is not asserted.',
+ 'Low-coherence pixels are excluded and shown grey. Absence of a signal there is NOT evidence of stability.',
+ 'Single 12-day pairs retain tropospheric noise (the ionospheric screen is subtracted where available); the local noise floor is estimated robustly (MAD) from the scene.',
+ 'Product grid is ~80 m: small or fast failures are not resolved.',
+ 'Radar shadow/layover masking and pixel-offset cross-check are NOT applied in this build.',
+ 'The priority index P is a transparent, expert-weighted, UNCALIBRATED relative ranking (not a landslide probability). Missing components are excluded and the remaining weights renormalised.',
+ 'OpenStreetMap completeness varies; rainfall and terrain are included only when supplied (see "not available" markers).',
+ 'Observed deformation and exposure only: SLOPEWISE does not predict the occurrence or date of any landslide.'];
+function reportHTML(h){const t=tier(h.P);const e=M.epochs[cur];
+ return `<!doctype html><meta charset=utf-8><title>SLOPEWISE evidence report - Hotspot ${h.id}</title><style>body{font:14px/1.5 system-ui;max-width:780px;margin:24px auto;padding:0 16px;color:#111}
+ h1{margin-bottom:0}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;text-align:left}.s{color:#555}</style>
+ <h1>SLOPEWISE evidence report</h1><p class=s>Hotspot #${h.id} · ${M.site} · generated ${new Date().toISOString().slice(0,10)}</p>
+ <p><b>Observed deformation and exposure assessment. This is not a landslide prediction.</b></p>
+ <h2>1. Satellite evidence</h2><table><tr><th>NISAR product(s)</th><td>${M.epochs.map(x=>x.granule).join('<br>')}</td></tr>
+ <tr><th>Acquisition dates (from granule name)</th><td>${M.epochs.map(x=>x.label).join('<br>')}</td></tr><tr><th>Data maturity</th><td>${M.maturity}</td></tr>
+ <tr><th>Epoch shown</th><td>${e.label}</td></tr></table>
+ <h2>2. Measurement</h2><table><tr><th>Mean LOS change</th><td>${sgn(h.mean_mm)} mm (max |${fmt(h.max_abs_mm)}| mm)</td></tr><tr><th>Cluster size</th><td>${h.n_px} px · ${fmt(h.area_ha)} ha</td></tr>
+ <tr><th>Local noise floor σ</th><td>${fmt(M.cur_sigma)} mm (signal/noise ${fmt(h.snr)})</td></tr><tr><th>Mean coherence</th><td>${fmt(h.coh,2)}</td></tr>
+ <tr><th>Valid pixel fraction</th><td>${fmt(h.valid_frac*100,0)}%</td></tr><tr><th>Measurement confidence</th><td><b>${h.conf.label}</b> (${fmt(h.conf.score,2)})</td></tr></table>
+ <h2>3. Terrain &amp; context</h2><p>Slope: ${h.slope==null?'not evaluated (no DEM)':fmt(h.slope,0)+'°'}. Rainfall: ${M.rain_mm==null?'not evaluated':fmt(M.rain_mm,0)+' mm (user-supplied)'}.</p>
+ <h2>4. Infrastructure exposure</h2><p>${h.road?`Nearest road: ${h.road.name} (${h.road.kind}), ${fmt(h.road.dist_m,0)} m.`:'Roads not loaded.'} ${h.place?`Nearest settlement: ${h.place.name}, ${fmt(h.place.dist_m,0)} m.`:''}
+ ${h.down?(h.down.hit_m!=null?`Steepest-descent path meets a road after ${fmt(h.down.hit_m,0)} m.`:'Steepest-descent path does not meet a mapped road within 3 km.'):''}</p>
+ <h2>5. Review priority (relative, uncalibrated)</h2><p>P = ${fmt(h.P,2)} · ${TL[t]} · evidence completeness ${fmt(h.completeness*100,0)}%</p>
+ <table>${Object.keys(M.weights).map(k=>`<tr><th>${NM[k]} (w=${M.weights[k]})</th><td>${h.comps[k]==null?'not available - excluded':fmt(h.comps[k],2)}</td></tr>`).join('')}</table>
+ <h2>6. Why identified</h2><ul>${h.why.map(w=>`<li>${w}</li>`).join('')}</ul>
+ <h2>7. Scientific limitations</h2><ul>${LIM.map(w=>`<li>${w}</li>`).join('')}</ul>`}
+function pRep(){const h=hs(sel);
+ return `<h3>Scientific evidence report</h3><select onchange="select(+this.value)">${H.map(x=>`<option value=${x.id} ${x.id===sel?'selected':''}>Hotspot #${x.id} (${sgn(x.mean_mm)} mm, conf ${x.conf.label})</option>`).join('')}</select>
+ <p><button class=act onclick="dl('slopewise_hotspot_${sel}.html','text/html',reportHTML(hs(sel)))">Download report (HTML)</button>
+ <button class=act onclick="dl('slopewise_hotspot_${sel}.json','application/json',JSON.stringify(hs(sel),null,2))">Data (JSON)</button>
+ <button class=act onclick="const w=window.open();w.document.write(reportHTML(hs(sel)));w.document.close();w.print()">Print / PDF</button></p>
+ <div class=card>${h?`<ul>${h.why.map(w=>`<li>${w}</li>`).join('')}</ul>`:''}</div><b>Limitations</b><ul>${LIM.map(w=>`<li>${w}</li>`).join('')}</ul>`}
+function render(){$('#tabs').innerHTML=[['map','Earth movement'],['hotspot','Hotspot'],['time','Time travel'],['infra','Infrastructure'],['report','Evidence']]
+ .map(([k,n])=>`<button class="${k===tab?'on':''}" onclick="setTab('${k}')">${n}</button>`).join('');
+ $('#body').innerHTML=({map:pMap,hotspot:pHot,time:pTime,infra:pInfra,report:pRep})[tab]()}
+applyLayers();render();
+</script></body></html>

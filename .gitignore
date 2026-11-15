@@ -1,0 +1,12 @@
+venv/
+venv312/
+data/nisar/
+data/aux/
+data/auxx/
+data/dem/
+outputs/
+__pycache__/
+*.h5
+*.tif
+app_backup_noDEM/
+app_backup_withDEM/
